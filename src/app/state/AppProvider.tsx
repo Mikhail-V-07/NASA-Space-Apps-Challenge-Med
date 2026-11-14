@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useReducer, useState } from 'react'
 import type { ReactNode } from 'react'
 import { AppContext } from './context'
-import { appReducer, createAppState, selectWorkspace } from './reducer'
+import { actorFor, appReducer, createAppState, selectWorkspace } from './reducer'
+import { visibleTo } from '../../domain'
 import { persistState, restoreState, STORAGE_KEY } from './persistence'
 
 function initialize() {
@@ -28,7 +29,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const value = useMemo(() => ({ state, dispatch }), [state])
   function downloadBackup() {
     if (blocked && state.mode !== 'medical') return
-    const raw = blocked ? localStorage.getItem(STORAGE_KEY) : state.mode === 'medical' ? JSON.stringify({ version: 2, state }, null, 2) : JSON.stringify({ version: 2, workspace: selectWorkspace(state), exportType: 'scoped-records' }, null, 2)
+    const raw = blocked ? localStorage.getItem(STORAGE_KEY) : state.mode === 'medical' ? JSON.stringify({ version: 3, state }, null, 2) : JSON.stringify({ version: 3, workspace: selectWorkspace(state), health: state.mode === 'mission' ? null : visibleTo(state.health, actorFor(state)), exportType: 'scoped-records' }, null, 2)
     const url = URL.createObjectURL(new Blob([raw ?? '{}'], { type: 'application/json' }))
     const a = document.createElement('a'); a.href = url; a.download = 'aegis-local-backup.json'; a.click(); URL.revokeObjectURL(url)
   }

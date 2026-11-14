@@ -1,8 +1,10 @@
-import type { AssessmentResult, ClinicalAction, ClinicalWorkspace, HealthAlert, HealthMeasurement, MetricKey, MissionSnapshot, MissionState, ScenarioId } from '../../../contracts/types'
+import type { AssessmentResult, ClinicalAction, ClinicalWorkspace, HealthAlert, HealthMeasurement, HealthWorkspace, MetricKey, MissionSnapshot, MissionState, ScenarioId } from '../../../contracts/types'
 import { initialState, runScenario, step } from '../../simulation/engine'
 import { synchronizeClinical } from '../../health/engine'
 import { addFollowUp, transitionEncounter } from '../../health/clinical'
 import { actionSchema, assessmentSchema, validateMeasurement } from '../../shared/validation'
+import { applyHealthCommand, emptyWorkspace, fromLegacy, legacyProjection, registry } from '../../domain'
+import type { Actor, HealthCommand } from '../../domain'
 
 export type Section = 'dashboard' | 'health' | 'spacecraft' | 'simulation' | 'events' | 'assessments' | 'research'
 export type UserMode = 'astronaut' | 'medical' | 'mission'
@@ -10,6 +12,8 @@ export type DataScope = 'observed' | 'synthetic'
 export interface AppState {
   mission: MissionSnapshot
   personal: ClinicalWorkspace
+  /** v3 observed health records — the single writable source. `personal.measurements` is derived from it. */
+  health: HealthWorkspace
   section: Section
   mode: UserMode
   scope: DataScope
@@ -37,10 +41,11 @@ export type AppAction =
   | { type: 'encounter/transition'; id: string; transition: 'review' | 'resolve'; at: string }
   | { type: 'encounter/follow-up'; id: string; action: ClinicalAction }
   | { type: 'notice'; message: string | null }
+  | { type: 'health/command'; command: HealthCommand }
   | { type: 'fixture/reset' }
 
 export function createAppState(): AppState {
-  return { mission: initialState(), personal: { measurements: [], assessments: [], alerts: [], encounters: [] }, section: 'health', mode: 'astronaut', scope: 'observed', sessionAstronautId: 'crew-01', selectedAstronautId: 'crew-01', selectedCompartmentId: null, notice: null }
+  return { mission: initialState(), personal: { measurements: [], assessments: [], alerts: [], encounters: [] }, health: emptyWorkspace(), section: 'health', mode: 'astronaut', scope: 'observed', sessionAstronautId: 'crew-01', selectedAstronautId: 'crew-01', selectedCompartmentId: null, notice: null }
 }
 export function canAccessSubject(state: AppState, id: string) {
   return state.mode === 'astronaut' ? id === state.sessionAstronautId : state.mode === 'medical' || state.scope === 'synthetic'
@@ -64,6 +69,25 @@ function updateClinical(state: AppState, data: ClinicalWorkspace): AppState {
   return state.scope === 'synthetic' ? { ...state, mission: { ...state.mission, ...data } } : { ...state, personal: data }
 }
 function clinicalData(state: AppState): ClinicalWorkspace { return state.scope === 'synthetic' ? state.mission : state.personal }
+/** The acting role for v3 commands. Demo context switching is NOT authentication (see docs/CORE_V2.md). */
+export function actorFor(state: AppState): Actor {
+  if (state.mode === 'astronaut') return { role: 'astronaut', subjectId: state.sessionAstronautId }
+  if (state.mode === 'medical') return { role: 'medical', subjectId: null }
+  throw new Error('Health records are not edited from Mission Overview.')
+}
+const HEALTH_NOTICES: Record<HealthCommand['type'], string> = {
+  'observation/record': 'Observation saved locally.', 'baseline/propose': 'Baseline proposed (descriptive median). Not a normal range.',
+  'baseline/accept': 'Baseline accepted.', 'encounter/open': 'Concern recorded. A medical review can follow up.',
+  'encounter/note': 'Note added.', 'encounter/link': 'Observations linked.', 'intervention/record': 'Action recorded. AEGIS did not select it.',
+  'intervention/outcome': 'Follow-up outcome recorded.', 'encounter/close': 'Encounter closed.',
+}
+function applyHealth(state: AppState, commands: HealthCommand[]): AppState {
+  if (state.scope !== 'observed') throw new Error('Switch to Observed records to change health records.')
+  const actor = actorFor(state), at = new Date().toISOString(), newId = () => globalThis.crypto.randomUUID()
+  const health = commands.reduce((ws, command) => applyHealthCommand(ws, command, { actor, at, newId, registry }), state.health)
+  const next = { ...state, health, personal: { ...state.personal, measurements: legacyProjection(health.observations) }, notice: HEALTH_NOTICES[commands.at(-1)!.type] }
+  return reevaluate(next)
+}
 function reevaluate(state: AppState): AppState {
   const full = state.scope === 'synthetic' ? state.mission : { ...state.mission, ...state.personal, environment: [] }
   return updateClinical(state, synchronizeClinical(full))
@@ -100,7 +124,18 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         const mission = { ...action.mission, assessments: action.mission.assessments ?? [], encounters: action.mission.encounters ?? [], sources: action.mission.sources ?? [], resources: action.mission.resources ?? [] }
         return { ...state, mission: { ...mission, ...synchronizeClinical(mission) }, selectedAstronautId: mission.crew.some(c => c.id === state.selectedAstronautId) ? state.selectedAstronautId : mission.crew[0]?.id ?? null }
       }
+      case 'health/command': return applyHealth(state, [action.command])
       case 'measurements/upsert': {
+        if (state.scope === 'observed') {
+          // v2 entry point retained for compatibility: observed records are stored as v3 observations.
+          const unique = [...new Map(action.records.map(r => [r.id, r])).values()]
+          const commands = unique.map(validateMeasurement).map(r => {
+            const record = fromLegacy(r)
+            if (!record) throw new Error(`${r.metric} has no v3 parameter yet.`)
+            return { type: 'observation/record' as const, record }
+          }).filter(c => !state.health.observations.some(o => o.id === c.record.id))
+          return commands.length ? applyHealth(state, commands) : { ...state, notice: 'Observation already saved.' }
+        }
         const data = clinicalData(state), records = action.records.map(validateMeasurement)
         if (records.some(r => !canAccessSubject(state, r.astronautId) || r.origin !== state.scope || !state.mission.crew.some(c => c.id === r.astronautId))) throw new Error('Record subject or origin does not match this workspace.')
         const measurements = [...new Map([...data.measurements, ...records].map(r => [r.id, r])).values()]

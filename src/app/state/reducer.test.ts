@@ -34,7 +34,9 @@ describe('core store and user contexts', () => {
     expect(state.personal.measurements).toHaveLength(1); expect(initial.personal.measurements).toHaveLength(0)
     state = appReducer(state, { type: 'mode/set', mode: 'mission' })
     state = appReducer(state, { type: 'mission/scenario', scenario: 'co2-excursion', seed: 12 })
-    expect(state.personal.measurements).toEqual([observed()])
+    expect(state.personal.measurements).toHaveLength(1)
+    expect(state.personal.measurements[0]).toMatchObject(observed())
+    expect(state.health.observations.map(o => o.id)).toEqual(['own'])
     expect(state.mission.measurements.every(r => r.origin === 'synthetic')).toBe(true)
   })
   it('does not allow observation origins to cross workspace boundaries', () => {
@@ -69,5 +71,20 @@ describe('core store and user contexts', () => {
     const state = createAppState()
     expect(appReducer(state, { type: 'navigate', section: 'simulation' })).toBe(state)
     expect(appReducer(state, { type: 'mission/advance', seconds: 180 })).toBe(state)
+  })
+  it('routes v3 commands through role checks and keeps the v2 projection in sync', () => {
+    let state = createAppState()
+    const record = { id: 'hr-1', subjectId: 'crew-01', parameterId: 'hr', parameterVersion: 1, value: { type: 'quantity' as const, value: 61, unitId: 'bpm' }, effectiveAt: '2026-11-15T08:00:00.000Z', recordedAt: '2026-11-15T08:00:00.000Z', sourceId: 'manual-entry', method: 'manual' as const, origin: 'observed' as const, quality: 'valid' as const, demonstrationOnly: false }
+    state = appReducer(state, { type: 'health/command', command: { type: 'observation/record', record } })
+    expect(state.health.observations).toHaveLength(1)
+    expect(state.personal.measurements[0]).toMatchObject({ id: 'hr-1', metric: 'heart_rate', value: 61 })
+    const spo2 = { ...record, id: 'spo2-1', parameterId: 'spo2', value: { type: 'quantity' as const, value: 97, unitId: 'percent' } }
+    state = appReducer(state, { type: 'health/command', command: { type: 'observation/record', record: spo2 } })
+    expect(state.health.observations).toHaveLength(2); expect(state.personal.measurements).toHaveLength(1)
+    state = appReducer(state, { type: 'health/command', command: { type: 'encounter/open', subjectId: 'crew-01', concern: 'Headache since waking', trigger: { type: 'self_report', refIds: [] }, observationIds: [] } })
+    const blocked = appReducer(state, { type: 'health/command', command: { type: 'encounter/close', encounterId: state.health.encounters[0]!.id, closure: 'x' } })
+    expect(blocked.notice).toContain('Crew Medical Officer'); expect(blocked.health.encounters[0]?.status).toBe('open')
+    const preview = appReducer(appReducer(state, { type: 'scope/set', scope: 'synthetic' }), { type: 'health/command', command: { type: 'observation/record', record: { ...record, id: 'hr-2' } } })
+    expect(preview.health.observations).toHaveLength(2); expect(preview.notice).toContain('Observed records')
   })
 })
