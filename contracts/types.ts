@@ -280,3 +280,214 @@ export interface ResearchSource extends SourceReference {
   providesData: boolean;
   checkedAt: string;
 }
+
+/* ───────────────────────── v3: data-driven health parameter model ─────────────────────────
+ * See docs/v3/SYSTEM_DESIGN.md. Additive; v1/v2 types above remain valid.
+ * Parameters are DATA (registry entries), not union members: adding a parameter must not
+ * require a type or schema change. No clinical reference values ship with the registry.
+ */
+
+/** Exact, definitional unit conversion to the parameter's canonical unit: canonical = value × factor + offset. */
+export interface UnitConversion { factor: number; offset: number }
+export interface UnitDefinition {
+  id: string
+  symbol: string
+  /** Physical dimension, e.g. 'frequency', 'pressure', 'volume'. Units only convert within one dimension. */
+  dimension: string
+  /** Conversion to the dimension's canonical unit. Only exact definitions are allowed (e.g. 1 L = 1000 mL). */
+  toCanonical?: UnitConversion
+  canonicalUnitId?: string
+}
+
+export type ParameterKind = 'raw_signal' | 'measurement' | 'derived' | 'self_report' | 'examination'
+export type ParameterValueType = 'quantity' | 'ordinal' | 'waveform'
+export type ParameterStatus = 'active' | 'provisional' | 'retired'
+
+export interface ParameterCategory { id: string; label: string; order: number }
+
+/** Constraints that reject malformed INPUT. They are never clinical reference ranges. */
+export interface EntryConstraints {
+  min?: number
+  max?: number
+  integer?: boolean
+  /** 'definitional' = follows from the quantity itself (e.g. SpO₂ ≤ 100 %). */
+  basis: 'definitional'
+  note?: string
+}
+
+export interface OrdinalScale {
+  min: number
+  max: number
+  lowAnchor: string
+  highAnchor: string
+  /** True only when a validated instrument is cited. All current scales are descriptive. */
+  validatedInstrument: boolean
+}
+
+export interface ParameterDefinition {
+  id: string
+  /** Short code displayed to users, e.g. 'HR', 'RRI'. Must be unique. */
+  code: string
+  displayName: string
+  categoryId: string
+  kind: ParameterKind
+  valueType: ParameterValueType
+  /** null while the unit is still to be determined (status must then be 'provisional'). */
+  canonicalUnitId: string | null
+  acceptedUnitIds: string[]
+  entry?: EntryConstraints
+  scale?: OrdinalScale
+  /** Data sources that MAY provide this parameter. Availability is a property of the source. */
+  potentialSourceIds: string[]
+  /** Ways this value can be captured. Raw signals are not manually entered. */
+  manualEntry: boolean
+  /** Parameters measured together (e.g. systolic/diastolic) share an entry group. */
+  entryGroupId?: string
+  /** Text that prevents confusion with similarly named parameters (HR vs PR, RRI vs RR). */
+  disambiguation?: string
+  /** For derived parameters: inputs and (once defined) the derivation method. */
+  derivation?: { fromParameterIds: string[]; methodId: string | null }
+  requiresNote?: boolean
+  visualization: 'line' | 'waveform' | 'none'
+  status: ParameterStatus
+  description: string
+  /** Where this definition came from (project list, earlier core, research source IDs). */
+  provenance: string
+  sourceRefIds: string[]
+  version: number
+}
+
+export type DataSourceKind = 'device' | 'manual' | 'derived' | 'simulator' | 'import'
+export interface DataSourceDefinition {
+  id: string
+  label: string
+  kind: DataSourceKind
+  /** 'not_connected' = a potential source with no integration yet. Nothing is claimed about real hardware. */
+  availability: 'simulated' | 'manual' | 'not_connected'
+  providesParameterIds: string[]
+  note?: string
+}
+
+export type ObservationValue =
+  | { type: 'quantity'; value: number; unitId: string }
+  | { type: 'ordinal'; value: number }
+  | { type: 'waveform'; unitId: string; sampleRateHz: number; samples: number[] }
+
+export interface ObservationContext {
+  encounterId?: string
+  interventionId?: string
+  compartmentId?: string
+  /** Free-text condition, e.g. 'seated, after 5 min rest'. Never a diagnosis. */
+  condition?: string
+  note?: string
+}
+
+/** One value of one parameter for one subject at one time. Missing = value null + quality 'missing'. */
+export interface Observation {
+  id: string
+  subjectId: AstronautId
+  parameterId: string
+  parameterVersion: number
+  value: ObservationValue | null
+  /** When the physiological state was measured. */
+  effectiveAt: ISODateTime
+  /** When the record entered AEGIS. */
+  recordedAt: ISODateTime
+  sourceId: string
+  method: AcquisitionMethod
+  origin: DataOrigin
+  quality: ObservationQuality
+  /** Unit and value as originally entered, when converted to the canonical unit. */
+  original?: { value: number; unitId: string }
+  derivedFrom?: { observationIds: string[]; methodId: string }
+  context?: ObservationContext
+  demonstrationOnly: boolean
+}
+
+/** A descriptive personal comparison point. Not a normal range, not a diagnosis. */
+export interface Baseline {
+  id: string
+  subjectId: AstronautId
+  parameterId: string
+  unitId: string
+  method: 'descriptive_median' | 'recorded_reference'
+  value: number
+  summary: { n: number; min: number; max: number }
+  observationIds: string[]
+  window: { from: ISODateTime; to: ISODateTime }
+  establishedAt: ISODateTime
+  establishedByRole: 'astronaut' | 'medical'
+  status: 'proposed' | 'accepted' | 'superseded'
+  note?: string
+}
+
+/** Reference values MUST cite an approved source. The registry ships with none. */
+export interface ReferenceValue {
+  id: string
+  parameterId: string
+  unitId: string
+  low?: number
+  high?: number
+  applicability: string
+  sourceRefId: string
+  approvalStatus: 'approved' | 'illustrative'
+}
+
+/* ───────────── v3 care workflow: concern → encounter → intervention → follow-up ───────────── */
+
+export type ActorRole = 'astronaut' | 'medical' | 'system'
+export interface CareNote { id: string; at: ISODateTime; byRole: ActorRole; text: string }
+
+export type EncounterStatus = 'open' | 'monitoring' | 'closed'
+export interface CareEncounter {
+  id: string
+  subjectId: AstronautId
+  origin: DataOrigin
+  openedAt: ISODateTime
+  openedByRole: ActorRole
+  trigger: { type: 'self_report' | 'observation_review' | 'alert' | 'scheduled_review'; refIds: string[] }
+  /** Concern in the subject's or caregiver's words. Not a diagnosis. */
+  concern: string
+  status: EncounterStatus
+  observationIds: string[]
+  notes: CareNote[]
+  interventionIds: string[]
+  closedAt?: ISODateTime
+  closure?: string
+  demonstrationOnly: boolean
+}
+
+export type InterventionKind = 'monitoring' | 'activity_adjustment' | 'countermeasure' | 'procedure' | 'medication' | 'escalation'
+/** A RECORD of an action decided and performed by people. AEGIS does not prescribe. */
+export interface Intervention {
+  id: string
+  encounterId: string
+  subjectId: AstronautId
+  origin: DataOrigin
+  kind: InterventionKind
+  description: string
+  /** Protocol basis. 'illustrative' marks demonstration content that is not clinically approved. */
+  protocol: { status: 'none' | 'illustrative' | 'approved'; reference?: string }
+  recordedAt: ISODateTime
+  recordedByRole: ActorRole
+  followUp: { dueAt: ISODateTime; parameterIds: string[] } | null
+  outcome?: {
+    assessedAt: ISODateTime
+    byRole: ActorRole
+    result: 'improved' | 'unchanged' | 'worse' | 'not_assessable'
+    note: string
+    observationIds: string[]
+  }
+  demonstrationOnly: boolean
+}
+
+export interface AuditEntry { id: string; at: ISODateTime; role: ActorRole; action: string; recordIds: string[] }
+
+export interface HealthWorkspace {
+  schemaVersion: 3
+  observations: Observation[]
+  baselines: Baseline[]
+  encounters: CareEncounter[]
+  interventions: Intervention[]
+  audit: AuditEntry[]
+}
