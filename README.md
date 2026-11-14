@@ -1,5 +1,10 @@
 # AEGIS — Astronaut Health Monitoring & Mission Digital Twin
 
+**Current implementation: Core v3** — data-driven health parameter registry, personal baselines and the
+concern → action → follow-up workflow. See [docs/v3/DEVELOPMENT_SCOPE.md](docs/v3/DEVELOPMENT_SCOPE.md),
+[docs/v3/SYSTEM_DESIGN.md](docs/v3/SYSTEM_DESIGN.md) and [docs/v3/DEVELOPMENT_PLAN.md](docs/v3/DEVELOPMENT_PLAN.md).
+To add a health parameter, add one entry to `src/domain/registry.ts`.
+
 **Current implementation: Core v2.** Start in Astronaut Mode → My Health.
 The existing shell now includes health entry, assessments, clinical follow-up,
 deterministic scenarios, a spacecraft cutaway and validated local persistence.
