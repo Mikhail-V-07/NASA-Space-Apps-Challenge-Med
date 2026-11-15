@@ -410,7 +410,7 @@ export interface Baseline {
   subjectId: AstronautId
   parameterId: string
   unitId: string
-  method: 'descriptive_median' | 'recorded_reference'
+  method: 'descriptive_median' | 'descriptive_mean' | 'recorded_reference'
   value: number
   summary: { n: number; min: number; max: number }
   observationIds: string[]
@@ -419,6 +419,10 @@ export interface Baseline {
   establishedByRole: 'astronaut' | 'medical'
   status: 'proposed' | 'accepted' | 'superseded'
   note?: string
+  /** v3.1 provenance: version per subject+parameter, the baseline it replaces, and the policy used. */
+  version?: number
+  supersedesId?: string
+  policy?: BaselinePolicy
 }
 
 /** Reference values MUST cite an approved source. The registry ships with none. */
@@ -445,10 +449,11 @@ export interface CareEncounter {
   origin: DataOrigin
   openedAt: ISODateTime
   openedByRole: ActorRole
-  trigger: { type: 'self_report' | 'observation_review' | 'alert' | 'scheduled_review'; refIds: string[] }
+  trigger: { type: 'self_report' | 'observation_review' | 'alert' | 'scheduled_review' | 'attention_item' | 'preventive_review'; refIds: string[] }
   /** Concern in the subject's or caregiver's words. Not a diagnosis. */
   concern: string
   status: EncounterStatus
+  priority?: EncounterPriority
   observationIds: string[]
   notes: CareNote[]
   interventionIds: string[]
@@ -470,6 +475,8 @@ export interface Intervention {
   protocol: { status: 'none' | 'illustrative' | 'approved'; reference?: string }
   recordedAt: ISODateTime
   recordedByRole: ActorRole
+  /** Resources consumed by this action (lot-level). */
+  resourceUseIds?: string[]
   followUp: { dueAt: ISODateTime; parameterIds: string[] } | null
   outcome?: {
     assessedAt: ISODateTime
@@ -483,6 +490,154 @@ export interface Intervention {
 
 export interface AuditEntry { id: string; at: ISODateTime; role: ActorRole; action: string; recordIds: string[] }
 
+/* ───────────── v3.1: analytics, prevention, clinical framework, resources, mission, knowledge ─────────────
+ * All additive. Collections default to [] when restoring an older v3 workspace.
+ */
+
+/** How a baseline was (or will be) computed. Recorded with the baseline for provenance. */
+export interface BaselinePolicy {
+  method: 'median' | 'mean'
+  /** Minimum valid readings. A project setting, not a clinical rule; default is provisional. */
+  minReadings: number
+  dataset: { type: 'last_n'; n: number } | { type: 'window'; from: ISODateTime; to: ISODateTime } | { type: 'selected'; observationIds: string[] }
+}
+
+export type RuleStatus = 'demonstration' | 'approved' | 'disabled'
+export type AnalysisRuleCondition =
+  | { type: 'baseline_deviation'; parameterId: string; percent: number; direction: 'above' | 'below' | 'either'; consecutive: number }
+  | { type: 'stale_data'; parameterId: string; maxAgeHours: number }
+  | { type: 'trend'; parameterId: string; windowDays: number; direction: 'increasing' | 'decreasing'; minChangePerDay: number; minReadings: number }
+  | { type: 'plan_adherence'; minFraction: number; windowDays: number }
+  | { type: 'combination'; ruleIds: string[] }
+  | { type: 'reference_value'; referenceValueId: string }
+  /** Fixed cutoff. Allowed only in 'demonstration' rules (carried over from Core v2 DEMO-RECOVERY-01). */
+  | { type: 'demo_cutoff'; parameterId: string; op: 'below' | 'at_or_above'; value: number; consecutive: number }
+
+/** A configured analysis rule. Its output is an item needing attention, never a diagnosis. */
+export interface AnalysisRule {
+  id: string
+  title: string
+  description: string
+  condition: AnalysisRuleCondition
+  status: RuleStatus
+  /** Why the numbers are what they are, e.g. 'Demonstration setting chosen by the project team; not clinical'. */
+  basis: string
+  configuredByRole: ActorRole
+  sourceRefIds: string[]
+  version: number
+}
+
+export interface AttentionItem {
+  /** Deterministic: rule + subject + evidence key, so re-evaluation does not duplicate items. */
+  id: string
+  ruleId: string
+  ruleStatus: RuleStatus
+  subjectId: AstronautId
+  origin: DataOrigin
+  detectedAt: ISODateTime
+  title: string
+  explanation: string
+  evidenceObservationIds: string[]
+  limitations: string[]
+}
+export interface AttentionState { itemId: string; status: 'acknowledged' | 'linked' | 'dismissed'; encounterId?: string; at: ISODateTime; byRole: ActorRole; note?: string }
+
+export type PlanDomain = 'measurement' | 'exercise' | 'sleep' | 'hydration' | 'nutrition' | 'behavioral' | 'countermeasure'
+/** A scheduled preventive activity. Completion is evidenced by observations of `parameterIds` or by an explicit record. */
+export interface CarePlanItem {
+  id: string
+  subjectId: AstronautId
+  domain: PlanDomain
+  title: string
+  instructions: string
+  parameterIds: string[]
+  schedule: { everyHours: number; startAt: ISODateTime; endAt: ISODateTime | null }
+  status: 'active' | 'paused' | 'ended'
+  /** Who defined it. 'demonstration' marks project-authored demo plans. */
+  source: 'ground_prescribed' | 'cmo' | 'demonstration'
+  createdAt: ISODateTime
+  createdByRole: ActorRole
+  /** Encounter that created or changed this item (prevention ⇄ clinical link). */
+  encounterId?: string
+  demonstrationOnly: boolean
+}
+export interface PlanCompletion { id: string; planItemId: string; subjectId: AstronautId; dueAt: ISODateTime; at: ISODateTime; byRole: ActorRole; status: 'done' | 'skipped'; observationIds: string[]; note?: string }
+
+export interface SymptomEntry { label: string; bodyRegion?: string; onsetAt?: ISODateTime; severity?: number; character?: string; associated?: string }
+/** Structured symptom and history intake. Recorded words, not interpretations. */
+export interface ClinicalIntake { id: string; encounterId: string; at: ISODateTime; byRole: ActorRole; symptoms: SymptomEntry[]; history?: string; medications?: string; allergies?: string }
+export interface ExamFinding { id: string; encounterId: string; at: ISODateTime; byRole: ActorRole; area: string; finding: string }
+export type EncounterPriority = 'routine' | 'urgent' | 'emergency'
+
+export type QualificationId = 'crew_medical_officer' | 'physician_level' | 'basic_life_support'
+export interface ProtocolStepOption { id: string; label: string; nextStepId: string | null }
+export interface ProtocolStep {
+  id: string
+  kind: 'collect' | 'measure' | 'assess' | 'decide' | 'act' | 'escalate' | 'reassess'
+  title: string
+  guidance: string
+  parameterIds?: string[]
+  requiredResourceTags?: string[]
+  requiredQualification?: QualificationId
+  options?: ProtocolStepOption[]
+  nextStepId?: string | null
+}
+/** Workflow structure. 'illustrative' protocols contain no clinical criteria, drugs or doses. */
+export interface ProtocolDefinition {
+  id: string
+  title: string
+  purpose: string
+  status: 'illustrative' | 'approved'
+  applicability: string
+  priority: EncounterPriority
+  sourceRefIds: string[]
+  startStepId: string
+  steps: ProtocolStep[]
+  version: number
+}
+export interface ProtocolStepRecord { stepId: string; status: 'done' | 'skipped'; at: ISODateTime; byRole: ActorRole; optionId?: string; note?: string; observationIds: string[]; safetyIssues: string[] }
+export interface ProtocolRun { id: string; encounterId: string; protocolId: string; protocolVersion: number; protocolStatus: ProtocolDefinition['status']; startedAt: ISODateTime; byRole: ActorRole; currentStepId: string | null; steps: ProtocolStepRecord[]; status: 'active' | 'completed' | 'abandoned' }
+
+/** A suggestion AEGIS (or a protocol) put forward, and what a person decided about it. */
+export interface DecisionRecord {
+  id: string
+  encounterId: string
+  at: ISODateTime
+  byRole: ActorRole
+  recommendation: { source: 'protocol_step' | 'attention_item' | 'assistant'; refId: string; text: string; evidenceIds: string[]; limitations: string[] }
+  decision: 'accepted' | 'declined' | 'modified'
+  rationale: string
+}
+
+export interface GroundMessage { id: string; subjectId: AstronautId; encounterId?: string; createdAt: ISODateTime; byRole: ActorRole; summary: string; recordIds: string[]; channel: 'store_and_forward'; deliverAt: ISODateTime }
+
+export type ResourceCategory = 'medication' | 'consumable' | 'equipment' | 'diagnostic'
+export interface ResourceLot { lotId: string; quantity: number; expiresAt: ISODateTime | null }
+export interface InventoryItem { id: string; name: string; category: ResourceCategory; unit: string; lots: ResourceLot[]; status: 'available' | 'maintenance' | 'unavailable'; location: string; capabilityTags: string[]; note?: string; demonstrationOnly: boolean }
+export interface ResourceUse { id: string; resourceId: string; lotId: string; quantity: number; at: ISODateTime; byRole: ActorRole; subjectId: AstronautId; encounterId?: string; interventionId?: string }
+
+export interface CrewQualification { crewId: AstronautId; qualifications: QualificationId[] }
+export interface MissionProfile {
+  id: string
+  name: string
+  destination: string
+  durationDays: number
+  comms: { mode: 'realtime' | 'delayed' | 'blackout'; oneWayDelayMinutes: number }
+  evacuationAvailable: boolean
+  resupplyAvailable: boolean
+  /** Descriptive label after NASA/TM-2017-219290; not a certification. */
+  levelOfCareLabel: string
+  qualifications: CrewQualification[]
+  basis: string
+  sourceRefIds: string[]
+}
+
+export type ProfileEntryKind = 'history' | 'risk_factor' | 'limitation' | 'preflight_result' | 'allergy' | 'medication'
+export interface ProfileEntry { id: string; subjectId: AstronautId; kind: ProfileEntryKind; text: string; recordedAt: ISODateTime; byRole: ActorRole; status: 'active' | 'resolved'; demonstrationOnly: boolean }
+
+export interface KnowledgeSource { id: string; title: string; organization: string; date: string; url: string }
+export interface KnowledgeArticle { id: string; title: string; tags: string[]; parameterIds: string[]; summary: string; points: { text: string; sourceRefIds: string[] }[]; status: 'reference' | 'illustrative' }
+
 export interface HealthWorkspace {
   schemaVersion: 3
   observations: Observation[]
@@ -490,4 +645,15 @@ export interface HealthWorkspace {
   encounters: CareEncounter[]
   interventions: Intervention[]
   audit: AuditEntry[]
+  profile: ProfileEntry[]
+  plans: CarePlanItem[]
+  completions: PlanCompletion[]
+  attention: AttentionState[]
+  intakes: ClinicalIntake[]
+  findings: ExamFinding[]
+  protocolRuns: ProtocolRun[]
+  decisions: DecisionRecord[]
+  messages: GroundMessage[]
+  resources: InventoryItem[]
+  resourceUses: ResourceUse[]
 }
