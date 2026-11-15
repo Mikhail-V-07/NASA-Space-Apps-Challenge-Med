@@ -32,7 +32,7 @@ export type HealthCommand =
   | { type: 'observation/record'; record: Observation }
   | { type: 'baseline/propose'; subjectId: string; parameterId: string; observationIds: string[]; note?: string }
   | { type: 'baseline/accept'; baselineId: string }
-  | { type: 'encounter/open'; subjectId: string; concern: string; trigger: CareEncounter['trigger']; observationIds: string[] }
+  | { type: 'encounter/open'; subjectId: string; concern: string; trigger: CareEncounter['trigger']; observationIds: string[]; priority?: EncounterPriority; /** Links the new encounter to an attention item in one step. */ attentionItemId?: string }
   | { type: 'encounter/note'; encounterId: string; text: string }
   | { type: 'encounter/link'; encounterId: string; observationIds: string[] }
   | { type: 'intervention/record'; encounterId: string; input: Omit<InterventionInput, 'id' | 'at' | 'byRole'> }
@@ -99,8 +99,10 @@ export function applyHealthCommand(ws: HealthWorkspace, cmd: HealthCommand, ctx:
       assertSubject(actor, cmd.subjectId)
       const evidence = ws.observations.filter(o => cmd.observationIds.includes(o.id))
       if (evidence.length !== cmd.observationIds.length || evidence.some(o => o.subjectId !== cmd.subjectId)) throw new Error('Evidence must be this person’s recorded observations.')
-      const e = openEncounter({ id: ctx.newId(), subjectId: cmd.subjectId, origin, at, byRole: actor.role, concern: cmd.concern, trigger: cmd.trigger, observationIds: cmd.observationIds })
-      return { ...ws, encounters: [...ws.encounters, e], audit: [...ws.audit, audit('encounter/open', [e.id])] }
+      const opened = openEncounter({ id: ctx.newId(), subjectId: cmd.subjectId, origin, at, byRole: actor.role, concern: cmd.concern, trigger: cmd.trigger, observationIds: cmd.observationIds })
+      const e = cmd.priority ? setPriority(opened, cmd.priority, actor.role) : opened
+      const link: AttentionState[] = cmd.attentionItemId ? [{ itemId: cmd.attentionItemId, status: 'linked', encounterId: e.id, at, byRole: actor.role }] : []
+      return { ...ws, encounters: [...ws.encounters, e], attention: [...ws.attention, ...link], audit: [...ws.audit, audit('encounter/open', [e.id, ...(cmd.attentionItemId ? [cmd.attentionItemId] : [])])] }
     }
     case 'encounter/note': {
       const e = find(ws.encounters, cmd.encounterId, 'Encounter'); assertSubject(actor, e.subjectId)

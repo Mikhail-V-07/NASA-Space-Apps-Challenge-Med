@@ -72,6 +72,9 @@ export interface Trend {
   direction: 'increasing' | 'decreasing' | 'flat' | 'uncertain'
 }
 
+/** Shortest span over which a per-day trend is reported. A display convention, not a clinical rule. */
+export const MIN_TREND_SPAN_DAYS = 1
+
 /** Linear trend of usable readings. 'uncertain' when the interval spans zero or data are too few. */
 export function trend(records: readonly Observation[]): Trend | null {
   const pts = records.map(o => ({ t: Date.parse(o.effectiveAt) / DAY, v: numericValue(o) })).filter((p): p is { t: number; v: number } => p.v !== null)
@@ -79,6 +82,8 @@ export function trend(records: readonly Observation[]): Trend | null {
   const n = pts.length, mt = pts.reduce((a, p) => a + p.t, 0) / n, mv = pts.reduce((a, p) => a + p.v, 0) / n
   const sxx = pts.reduce((a, p) => a + (p.t - mt) ** 2, 0)
   if (sxx === 0) return null
+  // A per-day rate from readings spanning less than a day is not meaningful (e.g. entries seconds apart).
+  if (pts.at(-1)!.t - pts[0]!.t < MIN_TREND_SPAN_DAYS) return null
   const slope = pts.reduce((a, p) => a + (p.t - mt) * (p.v - mv), 0) / sxx
   let se: number | null = null
   if (n >= 3) {

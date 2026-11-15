@@ -85,6 +85,24 @@ describe('core store and user contexts', () => {
     const blocked = appReducer(state, { type: 'health/command', command: { type: 'encounter/close', encounterId: state.health.encounters[0]!.id, closure: 'x' } })
     expect(blocked.notice).toContain('Crew Medical Officer'); expect(blocked.health.encounters[0]?.status).toBe('open')
     const preview = appReducer(appReducer(state, { type: 'scope/set', scope: 'synthetic' }), { type: 'health/command', command: { type: 'observation/record', record: { ...record, id: 'hr-2' } } })
-    expect(preview.health.observations).toHaveLength(2); expect(preview.notice).toContain('Observed records')
+    // v3.1: the Simulated scope has its own synthetic workspace; observed records cannot be written into it.
+    expect(preview.health.observations).toHaveLength(2); expect(preview.notice).toContain('synthetic records only')
+    expect(preview.simulation.observations.some(o => o.id === 'hr-2')).toBe(false)
+  })
+
+  it('v3.1: simulated workspace accepts synthetic workflow commands; rules and mission config are CMO-only', () => {
+    let state = appReducer(createAppState(), { type: 'scope/set', scope: 'synthetic' })
+    const before = state.simulation.encounters.length
+    state = appReducer(state, { type: 'health/command', command: { type: 'encounter/open', subjectId: 'crew-01', concern: 'Synthetic review', trigger: { type: 'attention_item', refIds: [] }, observationIds: [] } })
+    expect(state.simulation.encounters.length).toBe(before + 1); expect(state.health.encounters).toHaveLength(0)
+    expect(state.simulation.encounters.at(-1)!.openedAt).toBe(state.sim.now)
+    const rule = state.rules.find(r => r.id === 'DEV-RHR-UP')!
+    expect(appReducer(state, { type: 'rules/update', rule: { ...rule, status: 'disabled' } }).rules.find(r => r.id === rule.id)!.status).toBe('demonstration')
+    const medical = appReducer(state, { type: 'mode/set', mode: 'medical' })
+    expect(appReducer(medical, { type: 'rules/update', rule: { ...rule, status: 'approved' } }).notice).toContain('cannot mark a rule approved')
+    const updated = appReducer(medical, { type: 'rules/update', rule: { ...rule, status: 'disabled' } })
+    expect(updated.rules.find(r => r.id === rule.id)).toMatchObject({ status: 'disabled', version: 2 })
+    const sim = appReducer(state, { type: 'sim/generate', scenario: 'nominal', seed: 3, days: 10 })
+    expect(sim.sim).toMatchObject({ scenario: 'nominal', seed: 3, days: 10 }); expect(sim.health).toBe(state.health)
   })
 })

@@ -3,6 +3,7 @@ import type { CareEncounter, Intervention, InterventionKind } from '../../../con
 import { Panel } from '../../app/components/Panel'
 import { formatTimestamp } from '../../app/format'
 import { followUpEvidence, followUpState, formatValue, registry, SELF_CARE_KINDS } from '../../domain'
+import { ClinicalSections } from './Clinical'
 import type { HealthView } from './useHealthView'
 
 const KINDS: { id: InterventionKind; label: string }[] = [
@@ -17,8 +18,7 @@ export function CarePanel({ view, selectedParameterId }: { view: HealthView; sel
   const [open, setOpen] = useState<string | null>(null)
   const encounters = [...workspace.encounters].sort((a, b) => b.openedAt.localeCompare(a.openedAt))
   const active = encounters.find(e => e.id === open) ?? encounters.find(e => e.status !== 'closed') ?? encounters[0]
-  if (view.synthetic) return <Panel title="Care & follow-up" eyebrow="Synthetic preview"><p className="empty-copy">Care records are kept for observed data only. Scenario cases remain under Events & Alerts.</p></Panel>
-  return <Panel title="Care & follow-up" eyebrow={role === 'medical' ? 'Crew Medical Officer context' : 'Your concerns and follow-up'}>
+  return <Panel title="Care & follow-up" eyebrow={`${role === 'medical' ? 'Crew Medical Officer context' : 'Your concerns and follow-up'}${view.synthetic ? ' · synthetic workspace' : ''}`}>
     {!readOnly && <ConcernForm view={view} selectedParameterId={selectedParameterId} onOpened={() => setOpen(null)} />}
     {encounters.length > 0 && <div className="chip-row" role="list" aria-label="Encounters">{encounters.map(e => <button key={e.id} role="listitem" className="crew-chip" aria-pressed={active?.id === e.id} onClick={() => setOpen(e.id)}>{e.status === 'closed' ? '✓ ' : ''}{e.concern.slice(0, 60)} · {e.status}</button>)}</div>}
     {active ? <EncounterDetail key={active.id} view={view} encounter={active} /> : <p className="empty-copy">No concerns recorded.</p>}
@@ -28,12 +28,15 @@ export function CarePanel({ view, selectedParameterId }: { view: HealthView; sel
 
 function ConcernForm({ view, selectedParameterId, onOpened }: { view: HealthView; selectedParameterId: string; onOpened(): void }) {
   const [concern, setConcern] = useState(''), [attach, setAttach] = useState(true)
-  const latest = [...view.workspace.observations].filter(o => o.parameterId === selectedParameterId).sort((a, b) => a.effectiveAt.localeCompare(b.effectiveAt)).at(-1)
+  const latest = [...view.workspace.observations].filter(o => o.parameterId === selectedParameterId && o.effectiveAt <= view.now).sort((a, b) => a.effectiveAt.localeCompare(b.effectiveAt)).at(-1)
   const p = registry.parameter(selectedParameterId)
   return <form className="entry-form" onSubmit={e => { e.preventDefault(); if (!view.subjectId) return; view.send({ type: 'encounter/open', subjectId: view.subjectId, concern, trigger: { type: 'self_report', refIds: [] }, observationIds: attach && latest ? [latest.id] : [] }); setConcern(''); onOpened() }}>
     <label className="field">Describe a concern in your own words<textarea value={concern} maxLength={2000} onChange={e => setConcern(e.target.value)} placeholder="What you notice, since when, what makes it better or worse" /></label>
     {latest && p && <label className="check-label"><input type="checkbox" checked={attach} onChange={e => setAttach(e.target.checked)} />Attach latest {p.code} reading ({formatValue(latest, registry)})</label>}
-    <button className="button" type="submit" disabled={!concern.trim()}>Record concern</button>
+    <div className="control-row">
+      <button className="button" type="submit" disabled={!concern.trim()}>Record concern</button>
+      <button className="button danger" type="button" onClick={() => { if (!view.subjectId) return; view.send({ type: 'encounter/open', subjectId: view.subjectId, concern: concern.trim() || 'Emergency declared', trigger: { type: 'self_report', refIds: [] }, observationIds: [], priority: 'emergency' }); setConcern(''); onOpened() }}>Declare emergency</button>
+    </div>
   </form>
 }
 
@@ -49,11 +52,26 @@ function EncounterDetail({ view, encounter: e }: { view: HealthView; encounter: 
     {evidence.length > 0 && <ul className="plain-list">{evidence.map(o => <li key={o.id}>{registry.parameter(o.parameterId)?.code}: {formatValue(o, registry)} · {formatTimestamp(o.effectiveAt)}</li>)}</ul>}
     {e.notes.length > 0 && <ol className="plain-list">{e.notes.map(n => <li key={n.id}><span className="mono">{formatTimestamp(n.at)} · {n.byRole}</span> {n.text}</li>)}</ol>}
     {writable && <form className="control-row" onSubmit={ev => { ev.preventDefault(); view.send({ type: 'encounter/note', encounterId: e.id, text: note }); setNote('') }}><label className="field">Add note<input value={note} maxLength={2000} onChange={ev => setNote(ev.target.value)} /></label><button className="button" disabled={!note.trim()}>Add</button></form>}
+    {writable && <LinkReadings view={view} encounter={e} />}
+    <ClinicalSections view={view} encounter={e} />
+    <h3>Actions & follow-up</h3>
     {interventions.map(i => <InterventionItem key={i.id} view={view} intervention={i} />)}
     {writable && <InterventionForm view={view} encounter={e} />}
     {writable && role === 'medical' && <form className="control-row" onSubmit={ev => { ev.preventDefault(); view.send({ type: 'encounter/close', encounterId: e.id, closure }) }}><label className="field">Closure summary (CMO)<input value={closure} maxLength={2000} onChange={ev => setClosure(ev.target.value)} /></label><button className="button" disabled={!closure.trim()}>Close encounter</button></form>}
     {e.status === 'closed' && <p className="sample-note">Closed {e.closedAt && formatTimestamp(e.closedAt)}: {e.closure}</p>}
   </article>
+}
+
+function LinkReadings({ view, encounter }: { view: HealthView; encounter: CareEncounter }) {
+  const [pid, setPid] = useState('')
+  const latest = pid ? [...view.workspace.observations].filter(o => o.parameterId === pid && o.effectiveAt <= view.now && o.quality !== 'missing').sort((a, b) => a.effectiveAt.localeCompare(b.effectiveAt)).at(-1) : undefined
+  const params = [...new Set(view.workspace.observations.map(o => o.parameterId))]
+  if (!params.length) return null
+  return <form className="control-row" onSubmit={ev => { ev.preventDefault(); if (latest) view.send({ type: 'encounter/link', encounterId: encounter.id, observationIds: [latest.id] }) }}>
+    <label className="field">Link latest reading<select value={pid} onChange={ev => setPid(ev.target.value)}><option value="">Choose parameter…</option>{params.map(id => <option key={id} value={id}>{registry.parameter(id)?.displayName ?? id}</option>)}</select></label>
+    {latest && <span className="muted">{formatValue(latest, registry)} · {formatTimestamp(latest.effectiveAt)}</span>}
+    <button className="button" disabled={!latest || encounter.observationIds.includes(latest.id)}>Link</button>
+  </form>
 }
 
 function InterventionForm({ view, encounter }: { view: HealthView; encounter: CareEncounter }) {
@@ -81,7 +99,7 @@ function InterventionForm({ view, encounter }: { view: HealthView; encounter: Ca
 }
 
 function InterventionItem({ view, intervention: i }: { view: HealthView; intervention: Intervention }) {
-  const now = new Date().toISOString(), state = followUpState(i, view.workspace.observations, now)
+  const now = view.now, state = followUpState(i, view.workspace.observations, now)
   const evidence = followUpEvidence(i, view.workspace.observations)
   const [result, setResult] = useState<NonNullable<Intervention['outcome']>['result']>('unchanged'), [note, setNote] = useState(''), [chosen, setChosen] = useState<string[]>([])
   return <div className="follow-up care-action">

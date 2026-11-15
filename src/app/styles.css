@@ -163,3 +163,32 @@ th,td { padding: 10px 8px; border-bottom: 1px solid #30414c; text-align: left; o
 .check-label.inline { display: inline-flex; margin: 0 0 0 10px; }
 .form-error { color: #e6bc77; font-size: .8rem; margin-top: 10px; }
 fieldset.field { border: 1px solid #43535d; border-radius: 5px; padding: 10px 12px; }
+
+/* ── v3.1 health workspace ── */
+.tab-row { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid #2d3b44; padding-bottom: 2px; }
+.tab { background: transparent; border: 0; border-bottom: 2px solid transparent; color: #aab8c0; padding: 10px 14px; font-size: .82rem; min-height: 44px; }
+.tab[aria-selected="true"] { color: #edf1f2; border-bottom-color: #b4ded3; }
+.tab:hover { color: #edf1f2; }
+.badge.demo { background: #3d3626; color: #e6d6a8; }
+.badge.emergency { background: #5a2a2a; color: #ffd9d4; }
+.button.danger { background: #4a2626; border-color: #7a3b3b; }
+.button.danger:hover:not(:disabled) { background: #5e2f2f; }
+.button.small { min-height: 28px; padding: 4px 8px; font-size: .7rem; margin-left: 8px; }
+.attention-list { display: grid; gap: 12px; }
+.attention-item { border-left: 3px solid #d9c79a; padding: 6px 0 6px 12px; }
+.occ-strip { display: flex; gap: 3px; flex-wrap: wrap; margin: 6px 0; }
+.occ { display: inline-flex; width: 22px; height: 22px; align-items: center; justify-content: center; border-radius: 3px; font-size: .65rem; background: #26343e; color: #c0cbd3; }
+.occ-done, .occ-evidenced { background: #263e3d; color: #c5e7de; }
+.occ-missed { background: #3a2f2a; color: #e8cdb8; }
+.occ-skipped { background: #2f2f3a; color: #cfcfe8; }
+.occ-open { outline: 1px solid #b4ded3; }
+.protocol-steps li { padding: 2px 0; }
+.protocol-steps li.current { color: #edf1f2; font-weight: 600; }
+.protocol-steps li.done { color: #aab8c0; }
+.step-current { border: 1px solid #43535d; border-radius: 6px; padding: 10px 12px; margin-top: 8px; }
+.safety-issues li { color: #f0c9a8; }
+.message-body { white-space: pre-wrap; font-family: inherit; font-size: .8rem; background: #141d23; padding: 8px 10px; border-radius: 4px; margin: 6px 0; }
+.kb-article { border-bottom: 1px solid #2d3b44; padding: 8px 0; }
+.kb-article summary { cursor: pointer; }
+.priority-emergency { border: 1px solid #7a3b3b; border-radius: 6px; padding: 6px 10px; }
+.clinical h3 { margin: 10px 0 4px; font-size: .9rem; }

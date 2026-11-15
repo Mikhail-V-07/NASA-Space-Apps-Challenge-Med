@@ -1,9 +1,11 @@
-import type { AssessmentResult, ClinicalAction, ClinicalWorkspace, HealthAlert, HealthMeasurement, HealthWorkspace, MetricKey, MissionSnapshot, MissionState, ScenarioId } from '../../../contracts/types'
+import type { AnalysisRule, AssessmentResult, ClinicalAction, ClinicalWorkspace, CrewQualification, HealthAlert, HealthMeasurement, HealthWorkspace, MetricKey, MissionProfile, MissionSnapshot, MissionState, ScenarioId } from '../../../contracts/types'
 import { initialState, runScenario, step } from '../../simulation/engine'
 import { synchronizeClinical } from '../../health/engine'
 import { addFollowUp, transitionEncounter } from '../../health/clinical'
 import { actionSchema, assessmentSchema, validateMeasurement } from '../../shared/validation'
-import { applyHealthCommand, emptyWorkspace, fromLegacy, legacyProjection, registry } from '../../domain'
+import { DEMO_RULES, MISSION_PRESETS, applyHealthCommand, emptyWorkspace, fromLegacy, legacyProjection, registry, ruleProblems } from '../../domain'
+import { simulate } from '../../simulation/v3'
+import type { V3ScenarioId } from '../../simulation/v3'
 import type { Actor, HealthCommand } from '../../domain'
 
 export type Section = 'dashboard' | 'health' | 'spacecraft' | 'simulation' | 'events' | 'assessments' | 'research'
@@ -14,6 +16,13 @@ export interface AppState {
   personal: ClinicalWorkspace
   /** v3 observed health records — the single writable source. `personal.measurements` is derived from it. */
   health: HealthWorkspace
+  /** v3.1 synthetic health workspace produced by the v3 simulator. Writable only in Simulated scope. */
+  simulation: HealthWorkspace
+  sim: SimulationState
+  /** Mission configuration (preset + crew qualifications + start). */
+  missionConfig: MissionConfig
+  /** Configurable analysis rules (all shipped rules are 'demonstration'). */
+  rules: AnalysisRule[]
   section: Section
   mode: UserMode
   scope: DataScope
@@ -22,6 +31,8 @@ export interface AppState {
   selectedCompartmentId: string | null
   notice: string | null
 }
+export interface SimulationState { scenario: V3ScenarioId; seed: number; days: number; startAt: string; now: string }
+export interface MissionConfig { profileId: string; startAt: string; qualifications: CrewQualification[] }
 export type AppAction =
   | { type: 'navigate'; section: Section }
   | { type: 'mode/set'; mode: UserMode }
@@ -43,9 +54,30 @@ export type AppAction =
   | { type: 'notice'; message: string | null }
   | { type: 'health/command'; command: HealthCommand }
   | { type: 'fixture/reset' }
+  | { type: 'sim/generate'; scenario: V3ScenarioId; seed: number; days: number }
+  | { type: 'sim/advance'; hours: number }
+  | { type: 'mission/configure'; profileId: string; qualifications: CrewQualification[] }
+  | { type: 'rules/update'; rule: AnalysisRule }
+  | { type: 'rules/reset' }
+
+const SIM_START = '2026-10-25T00:00:00.000Z'
+const CREW_IDS = ['crew-01', 'crew-02', 'crew-03']
+export const DEFAULT_QUALIFICATIONS: CrewQualification[] = [{ crewId: 'crew-01', qualifications: ['basic_life_support'] }, { crewId: 'crew-02', qualifications: ['crew_medical_officer', 'basic_life_support'] }, { crewId: 'crew-03', qualifications: ['basic_life_support'] }]
+export function generateSimulation(scenario: V3ScenarioId, seed: number, days: number): { simulation: HealthWorkspace; sim: SimulationState } {
+  const r = simulate({ scenario, seed, days, crewIds: CREW_IDS, startAt: SIM_START })
+  return { simulation: r.workspace, sim: { scenario, seed, days, startAt: SIM_START, now: r.now } }
+}
+/** Mission profile in force: preset + recorded crew qualifications. */
+export function missionProfileOf(state: Pick<AppState, 'missionConfig'>): MissionProfile {
+  const preset = MISSION_PRESETS.find(m => m.id === state.missionConfig.profileId) ?? MISSION_PRESETS[0]!
+  return { ...preset, qualifications: state.missionConfig.qualifications }
+}
+/** "Now" for the active scope: wall clock for observed data, simulator clock for synthetic data. */
+export function scopeNow(state: Pick<AppState, 'scope' | 'sim'>): string { return state.scope === 'synthetic' ? state.sim.now : new Date().toISOString() }
+export function activeWorkspace(state: Pick<AppState, 'scope' | 'health' | 'simulation'>): HealthWorkspace { return state.scope === 'synthetic' ? state.simulation : state.health }
 
 export function createAppState(): AppState {
-  return { mission: initialState(), personal: { measurements: [], assessments: [], alerts: [], encounters: [] }, health: emptyWorkspace(), section: 'health', mode: 'astronaut', scope: 'observed', sessionAstronautId: 'crew-01', selectedAstronautId: 'crew-01', selectedCompartmentId: null, notice: null }
+  return { mission: initialState(), personal: { measurements: [], assessments: [], alerts: [], encounters: [] }, health: emptyWorkspace(), ...generateSimulation('sleep_disruption', 42, 21), missionConfig: { profileId: 'mars-transit', startAt: SIM_START, qualifications: DEFAULT_QUALIFICATIONS }, rules: DEMO_RULES, section: 'health', mode: 'astronaut', scope: 'observed', sessionAstronautId: 'crew-01', selectedAstronautId: 'crew-01', selectedCompartmentId: null, notice: null }
 }
 export function canAccessSubject(state: AppState, id: string) {
   return state.mode === 'astronaut' ? id === state.sessionAstronautId : state.mode === 'medical' || state.scope === 'synthetic'
@@ -87,9 +119,14 @@ const HEALTH_NOTICES: Record<HealthCommand['type'], string> = {
   'message/send': 'Message queued for the ground (store-and-forward).', 'resources/seed': 'Demonstration inventory loaded.', 'resource/use': 'Resource use logged.',
 }
 function applyHealth(state: AppState, commands: HealthCommand[]): AppState {
-  if (state.scope !== 'observed') throw new Error('Switch to Observed records to change health records.')
-  const actor = actorFor(state), at = new Date().toISOString(), newId = () => globalThis.crypto.randomUUID()
-  const health = commands.reduce((ws, command) => applyHealthCommand(ws, command, { actor, at, newId, registry }), state.health)
+  const actor = actorFor(state), newId = () => globalThis.crypto.randomUUID(), mission = missionProfileOf(state)
+  if (state.scope === 'synthetic') {
+    const at = state.sim.now
+    const simulation = commands.reduce((ws, command) => applyHealthCommand(ws, command, { actor, at, newId, registry, origin: 'synthetic', mission }), state.simulation)
+    return { ...state, simulation, notice: `${HEALTH_NOTICES[commands.at(-1)!.type]} (synthetic workspace)` }
+  }
+  const at = new Date().toISOString()
+  const health = commands.reduce((ws, command) => applyHealthCommand(ws, command, { actor, at, newId, registry, mission }), state.health)
   const next = { ...state, health, personal: { ...state.personal, measurements: legacyProjection(health.observations) }, notice: HEALTH_NOTICES[commands.at(-1)!.type] }
   return reevaluate(next)
 }
@@ -172,6 +209,30 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       }
       case 'notice': return { ...state, notice: action.message }
       case 'fixture/reset': return { ...state, mission: initialState(state.mission.seed), notice: 'Synthetic mission reset; observed records preserved.' }
+      case 'sim/generate': {
+        if (!Number.isInteger(action.seed) || action.seed < 0 || action.seed > 4294967295) throw new Error('Seed must be a whole number ≥ 0.')
+        return { ...state, ...generateSimulation(action.scenario, action.seed, action.days), notice: `Synthetic workspace regenerated (${action.scenario}, seed ${action.seed}, ${action.days} days). Observed records untouched.` }
+      }
+      case 'sim/advance': {
+        if (!(action.hours > 0 && action.hours <= 24 * 30)) throw new Error('Advance between 1 hour and 30 days.')
+        return { ...state, sim: { ...state.sim, now: new Date(Date.parse(state.sim.now) + action.hours * 3_600_000).toISOString() }, notice: `Simulator clock advanced ${action.hours} h. No new synthetic readings are generated by advancing.` }
+      }
+      case 'mission/configure': {
+        if (state.mode !== 'medical') throw new Error('Mission medical configuration is changed in the CMO context.')
+        if (!MISSION_PRESETS.some(m => m.id === action.profileId)) throw new Error('Unknown mission profile.')
+        return { ...state, missionConfig: { ...state.missionConfig, profileId: action.profileId, qualifications: action.qualifications }, notice: 'Mission configuration updated.' }
+      }
+      case 'rules/update': {
+        if (state.mode !== 'medical') throw new Error('Analysis rules are configured in the CMO context.')
+        const prev = state.rules.find(r => r.id === action.rule.id)
+        if (!prev) throw new Error('Unknown rule.')
+        if (action.rule.status === 'approved') throw new Error('AEGIS cannot mark a rule approved; that requires the mission medical authority.')
+        const next = { ...action.rule, version: prev.version + 1, configuredByRole: 'medical' as const }
+        const problems = ruleProblems(next, state.rules, registry)
+        if (problems.length) throw new Error(problems.join(' '))
+        return { ...state, rules: state.rules.map(r => r.id === next.id ? next : r), notice: `Rule ${next.id} updated to v${next.version}.` }
+      }
+      case 'rules/reset': return state.mode === 'medical' ? { ...state, rules: DEMO_RULES, notice: 'Rules reset to the shipped demonstration set.' } : state
     }
   } catch (error) { return { ...state, notice: `Not saved: ${error instanceof Error ? error.message : 'Invalid data'}` } }
 }

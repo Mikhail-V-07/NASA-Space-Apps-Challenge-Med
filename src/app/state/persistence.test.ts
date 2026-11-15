@@ -54,4 +54,21 @@ describe('validated persistence', () => {
     state.health = { ...state.health, observations: [{ id: 'x', subjectId: 'crew-01', parameterId: 'spo2', parameterVersion: 1, value: { type: 'quantity', value: 140, unitId: 'percent' }, effectiveAt: '2026-11-15T08:00:00.000Z', recordedAt: '2026-11-15T08:00:00.000Z', sourceId: 'manual-entry', method: 'manual', origin: 'observed', quality: 'valid', demonstrationOnly: false }] }
     expect(() => persistState(localStorage, state)).toThrow()
   })
+
+  it('v3.1: persists the synthetic workspace and restores an earlier v3 save without the new fields', () => {
+    let state = appReducer(createAppState(), { type: 'scope/set', scope: 'synthetic' })
+    state = appReducer(state, { type: 'health/command', command: { type: 'encounter/open', subjectId: 'crew-01', concern: 'Synthetic', trigger: { type: 'self_report', refIds: [] }, observationIds: [] } })
+    persistState(localStorage, state)
+    const back = restoreState(localStorage).state!
+    expect(back.simulation.encounters.length).toBe(state.simulation.encounters.length); expect(back.sim.seed).toBe(42)
+    const { simulation: _s, sim: _m, missionConfig: _c, rules: _r, ...older } = createAppState()
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: 3, state: older }))
+    const restored = restoreState(localStorage)
+    expect(restored.error).toBeNull(); expect(restored.state!.rules.length).toBeGreaterThan(0); expect(restored.state!.simulation.observations.length).toBeGreaterThan(0)
+  })
+  it('v3.1: refuses observed records inside the synthetic workspace', () => {
+    const state = createAppState()
+    state.simulation = { ...state.simulation, observations: [{ ...state.simulation.observations[0]!, origin: 'observed', method: 'manual' }] }
+    expect(() => persistState(localStorage, state)).toThrow()
+  })
 })

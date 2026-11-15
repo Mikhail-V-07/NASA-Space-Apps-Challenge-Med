@@ -3,16 +3,16 @@ import type { FormEvent } from 'react'
 import type { Observation, ParameterDefinition } from '../../../contracts/types'
 import { Panel } from '../../app/components/Panel'
 import { formatTimestamp } from '../../app/format'
-import { activeBaseline, createObservation, createWaveformObservation, differenceFromBaseline, formatValue, freshness, registry, round, series, summarize } from '../../domain'
+import { activeBaseline, createObservation, createWaveformObservation, differenceFromBaseline, formatValue, freshness, inWindow, registry, round, series, summarize } from '../../domain'
 import { TrendChart, WaveformChart } from './charts'
 import type { HealthView } from './useHealthView'
 
 const unitSymbol = (p: ParameterDefinition) => p.valueType === 'ordinal' ? `${p.scale?.min}–${p.scale?.max}` : p.canonicalUnitId ? registry.unit(p.canonicalUnitId)?.symbol ?? p.canonicalUnitId : 'unit TBD'
-const latestOf = (view: HealthView, parameterId: string) => series(view.workspace.observations, { subjectId: view.subjectId ?? '', parameterId, origin: view.synthetic ? 'synthetic' : 'observed', includeUnusable: true }).at(-1)
+const latestOf = (view: HealthView, parameterId: string) => series(view.workspace.observations, { subjectId: view.subjectId ?? '', parameterId, origin: view.origin, includeUnusable: true }).filter(o => o.effectiveAt <= view.now).at(-1)
 
 /** Overview of every registered parameter, grouped by registry category. */
 export function ParameterOverview({ view, selected, onSelect }: { view: HealthView; selected: string; onSelect(id: string): void }) {
-  const now = new Date().toISOString()
+  const now = view.now
   return <Panel title="Health parameters" eyebrow={`${registry.parameters.filter(p => p.status === 'active').length} active · ${registry.parameters.filter(p => p.status === 'provisional').length} pending definition`}>
     {[...registry.categories].sort((a, b) => a.order - b.order).map(c => {
       const params = registry.parameters.filter(p => p.categoryId === c.id && p.status !== 'retired')
@@ -35,35 +35,29 @@ export function ParameterOverview({ view, selected, onSelect }: { view: HealthVi
 }
 
 /** Detail for one parameter: definition, trend, baseline and provenance table. */
-export function ParameterDetail({ view, parameterId }: { view: HealthView; parameterId: string }) {
+export function ParameterDetail({ view, parameterId, window }: { view: HealthView; parameterId: string; window: { from: string; to: string } }) {
   const p = registry.parameter(parameterId)
   if (!p) return null
-  const origin = view.synthetic ? 'synthetic' : 'observed'
-  const all = series(view.workspace.observations, { subjectId: view.subjectId ?? '', parameterId, origin, includeUnusable: true })
-  const usable = series(view.workspace.observations, { subjectId: view.subjectId ?? '', parameterId, origin })
+  const origin = view.origin
+  const all = inWindow(series(view.workspace.observations, { subjectId: view.subjectId ?? '', parameterId, origin, includeUnusable: true }), window)
+  const usable = inWindow(series(view.workspace.observations, { subjectId: view.subjectId ?? '', parameterId, origin }), window)
   const baseline = activeBaseline(view.workspace.baselines, view.subjectId ?? '', parameterId)
   const summary = summarize(usable), latest = usable.at(-1), diff = latest && baseline ? differenceFromBaseline(latest, baseline) : null
   const unit = unitSymbol(p), waveform = [...all].reverse().find(o => o.value?.type === 'waveform')
-  const valid = usable.filter(o => o.quality === 'valid').slice(-3)
   return <Panel title={`${p.displayName} (${p.code})`} eyebrow={`${registry.categories.find(c => c.id === p.categoryId)?.label} · ${p.kind.replace('_', ' ')} · ${unit}`}>
     <p className="muted">{p.description}</p>
     {p.disambiguation && <p className="sample-note">{p.disambiguation}</p>}
     {p.scale && !p.scale.validatedInstrument && <p className="sample-note">Descriptive {p.scale.min}–{p.scale.max} scale ({p.scale.min} = {p.scale.lowAnchor}, {p.scale.max} = {p.scale.highAnchor}). Not a validated questionnaire.</p>}
     {p.status === 'provisional' ? <div className="empty-state"><span className="badge neutral">Definition pending</span><p>The unit{p.derivation ? ', source parameters and derivation method' : ' and data source'} for this parameter are still to be determined. Recording is disabled until the team defines them in the registry.</p></div> : <>
       {p.visualization === 'waveform' ? (waveform?.value?.type === 'waveform' ? <WaveformChart samples={waveform.value.samples} sampleRateHz={waveform.value.sampleRateHz} unit={unit} /> : <p className="empty-copy">No signal recorded. Raw signals are imported from a device export, not typed.</p>)
-        : <TrendChart records={usable.slice(-60)} baseline={baseline} unit={unit} label={p.displayName} />}
+        : <TrendChart records={usable.slice(-120)} baseline={baseline} unit={unit} label={p.displayName} />}
       {summary && p.visualization !== 'waveform' && <dl className="metadata stats">
         <div><dt>Readings</dt><dd>{summary.n} usable of {all.length}</dd></div>
         <div><dt>Range</dt><dd>{round(summary.min)} – {round(summary.max)} {unit}</dd></div>
         <div><dt>Median</dt><dd>{round(summary.median)} {unit}</dd></div>
-        <div><dt>Baseline</dt><dd>{baseline ? `${round(baseline.value)} ${unit} · ${baseline.status} · median of ${baseline.summary.n} (${round(baseline.summary.min)}–${round(baseline.summary.max)})` : 'Not established'}</dd></div>
+        <div><dt>Baseline</dt><dd>{baseline ? `${round(baseline.value)} ${unit} · v${baseline.version ?? 1} ${baseline.status} · ${baseline.method === 'descriptive_mean' ? 'mean' : 'median'} of ${baseline.summary.n} (${round(baseline.summary.min)}–${round(baseline.summary.max)})` : 'Not established'}</dd></div>
         {diff && <div><dt>Latest vs baseline</dt><dd>{diff.absolute >= 0 ? '+' : ''}{round(diff.absolute)} {unit}{diff.relativePercent !== null ? ` (${diff.relativePercent >= 0 ? '+' : ''}${round(diff.relativePercent)} %)` : ''} · {diff.withinBaselineSpread ? 'inside' : 'outside'} the range of baseline readings</dd></div>}
       </dl>}
-      {!view.readOnly && p.visualization !== 'waveform' && <div className="control-row">
-        <button className="button" disabled={valid.length < 3} onClick={() => view.send({ type: 'baseline/propose', subjectId: view.subjectId!, parameterId, observationIds: valid.map(o => o.id) })}>Propose baseline from last 3 valid readings</button>
-        {view.role === 'medical' && baseline?.status === 'proposed' && <button className="button primary" onClick={() => view.send({ type: 'baseline/accept', baselineId: baseline.id })}>Accept baseline</button>}
-        {valid.length < 3 && <span className="muted">{3 - valid.length} more valid reading(s) needed.</span>}
-      </div>}
       <ObservationTable records={all.slice(-15).reverse()} />
     </>}
     <p className="sample-note">Potential sources: {p.potentialSourceIds.map(id => { const s = registry.source(id); return s ? `${s.label}${s.availability === 'not_connected' ? ' (not connected)' : ''}` : id }).join(', ') || 'to be determined'}. Definition: {p.provenance}, v{p.version}.</p>
@@ -91,21 +85,21 @@ export function ObservationEntry({ view, parameterId, onRecorded }: { view: Heal
   function submit(event: FormEvent) {
     event.preventDefault(); setError('')
     try {
-      const now = new Date().toISOString(), effectiveAt = at ? new Date(at).toISOString() : now
+      const now = view.now, effectiveAt = at ? new Date(at).toISOString() : now, origin = view.origin
       const context = { condition, note }
       const records = p!.valueType === 'waveform'
-        ? [createWaveformObservation({ id: crypto.randomUUID(), subjectId, parameterId: p!.id, samples: parseSamples(samples), sampleRateHz: Number(rate), unitId: p!.canonicalUnitId!, effectiveAt, recordedAt: now, sourceId: 'file-import', method: 'dataset_import', origin: 'observed', context }, registry)]
+        ? [createWaveformObservation({ id: crypto.randomUUID(), subjectId, parameterId: p!.id, samples: parseSamples(samples), sampleRateHz: Number(rate), unitId: p!.canonicalUnitId!, effectiveAt, recordedAt: now, sourceId: 'file-import', method: 'dataset_import', origin, context }, registry)]
         : group.map(g => {
           const raw = values[g.id]?.trim() ?? ''
           if (!raw) throw new Error(`Enter ${g.displayName}. Missing is not zero.`)
-          return createObservation({ id: crypto.randomUUID(), subjectId, parameterId: g.id, value: Number(raw), unitId: units[g.id] ?? g.canonicalUnitId ?? '', effectiveAt, recordedAt: now, sourceId: 'manual-entry', method: 'manual', origin: 'observed', context }, registry)
+          return createObservation({ id: crypto.randomUUID(), subjectId, parameterId: g.id, value: Number(raw), unitId: units[g.id] ?? g.canonicalUnitId ?? '', effectiveAt, recordedAt: now, sourceId: 'manual-entry', method: 'manual', origin, context }, registry)
         })
       for (const record of records) view.send({ type: 'observation/record', record })
       onRecorded?.(records.map(r => r.id))
       setValues({}); setNote(''); setSamples('')
     } catch (e) { setError(e instanceof Error ? e.message : 'Invalid input') }
   }
-  return <Panel title={p.valueType === 'waveform' ? `Import ${p.code} signal` : `Record ${group.map(g => g.code).join(' / ')}`} eyebrow="Observed · manual entry">
+  return <Panel title={p.valueType === 'waveform' ? `Import ${p.code} signal` : `Record ${group.map(g => g.code).join(' / ')}`} eyebrow={view.synthetic ? "Synthetic workspace · manual entry (demonstration)" : "Observed · manual entry"}>
     <form className="entry-form" onSubmit={submit}>
       {p.valueType === 'waveform' ? <>
         <label className="field">Samples ({unitSymbol(p)}), comma- or space-separated, or a JSON array<textarea value={samples} onChange={e => setSamples(e.target.value)} placeholder="0.01, 0.02, 0.15, …" /></label>
