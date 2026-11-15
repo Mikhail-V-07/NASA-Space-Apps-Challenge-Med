@@ -24,11 +24,22 @@ src/domain/             pure TypeScript, no React, fully unit-tested
   registry.ts           categories, units, data sources, parameter definitions + integrity check
   observations.ts       structural schema, registry-aware checks, exact unit normalisation
   series.ts             series, summaries, descriptive baselines, differences, freshness
+  baselines.ts          v3.1 baseline policies, versions, supersession, recalculation
+  analytics.ts          windows, trend + uncertainty, completeness, quality, comparison, ANALYSES registry
+  prevention.ts         plan items, occurrences, adherence, intake totals, demonstration plans
+  rules.ts              data-driven AnalysisRule → AttentionItem; DEMO_RULES
   care.ts               encounter / intervention / follow-up / outcome rules
-  workspace.ts          commands + audit, role scoping, persistence schema, v2 migration
+  clinical.ts           intake, findings, illustrative workflows, safety checks, decisions, priority
+  mission.ts            mission presets, qualifications, ground messages, inventory (lots, FEFO, forecast)
+  knowledge.ts          sourced references and articles; keyword search
+  assistant.ts          AssistantProvider interface, guardrails, local provider, LLM stub (not connected)
+  workspace.ts          26 commands + audit, origin-aware context, role scoping, schemas, v2 migration
   legacy.ts             v3 ⇄ v2 HealthMeasurement adapter
-src/app/state/          React store: `health` (v3, writable) → derived `personal.measurements` (v2)
-src/health/v3/          registry-driven views: overview, detail/trend, entry, care panel
+src/simulation/v3.ts    seeded v3 simulator → synthetic HealthWorkspace
+src/app/state/          React store: `health` (observed, writable) → derived `personal.measurements` (v2);
+                        `simulation` (synthetic, writable in Simulated scope); missionConfig; rules
+src/health/v3/          tabbed workspace: Overview, Monitoring, Analytics, Prevention, Care, Profile,
+                        Mission & resources, Knowledge & assistant
 src/simulation, src/health/engine.ts   Core v2 simulator and demo rules (read the v2 projection)
 ```
 
@@ -47,8 +58,15 @@ There is one writable record for observed data (`state.health`). The v2 projecti
 | `CareEncounter` | subjectId, origin, trigger, concern, status (open · monitoring · closed), observationIds, notes, interventionIds, closure | |
 | `Intervention` | encounterId, kind, description, protocol {none · illustrative · approved}, recordedByRole, followUp {dueAt, parameterIds}, outcome {result, note, observationIds} | A record, not a prescription |
 | `AuditEntry` | at, role, action, recordIds | Appended by every command |
-| `CarePlanItem` *(planned)* | subjectId, kind (measurement · countermeasure · self_report), parameterIds, schedule, status | Adherence = observations in the due windows |
-| `AnalysisRule` *(planned)* | id, parameterIds, condition (baseline delta · reference value · missing schedule), configuredByRole, status (demonstration · approved), sourceRefIds | Output = attention item, never a diagnosis |
+| `Baseline` (v3.1 fields) | version, supersedesId, policy {method, minReadings, dataset: last_n · window · selected} | Older baselines read as v1 |
+| `CarePlanItem` / `PlanCompletion` | domain, parameterIds, schedule {everyHours, startAt, endAt}, source (ground_prescribed · cmo · demonstration), encounterId | Adherence = completion record, else a usable reading in the slot |
+| `AnalysisRule` / `AttentionItem` / `AttentionState` | condition (baseline_deviation · stale_data · trend · plan_adherence · combination · reference_value · demo_cutoff), status, basis, version | Item IDs are deterministic; states (acknowledged · linked · dismissed) are audited |
+| `ClinicalIntake`, `ExamFinding`, `EncounterPriority` | symptoms {label, region, onset, self-rated severity, character}, history, medications/allergies as reported | Recorded words, not interpretation |
+| `ProtocolDefinition` / `ProtocolRun` | steps (collect · measure · assess · decide · act · escalate · reassess), resource tags, qualification, options; run records note, safety issues acknowledged | Only `illustrative` ships |
+| `DecisionRecord` | recommendation {source, text, evidence, limitations}, decision (accepted · declined · modified), rationale | Rationale required unless accepted |
+| `MissionProfile`, `CrewQualification`, `GroundMessage` | comms {mode, one-way delay}, evacuation, resupply, basis + sources; message deliverAt | Presets in `MISSION_PRESETS` |
+| `InventoryItem`, `ResourceUse` | lots {quantity, expiresAt}, status, capabilityTags | Demonstration inventory has no product names or doses |
+| `ProfileEntry`, `KnowledgeSource`, `KnowledgeArticle` | | |
 
 ## 4. Parameter extensibility
 
@@ -103,8 +121,12 @@ capture (form, import, *planned* device adapters) → `createObservation` (norma
 
 | ID | Decision | Revisit when |
 |---|---|---|
-| D-01 | Baseline = median of the last 3 valid readings chosen by the user; the CMO accepts | The team defines a baseline protocol |
+| D-01 | *Revised in v3.1:* baselines follow a recorded policy (median or mean; last N, date window or selected readings; minimum ≥ 3). Default 7 of the last 14 valid readings, provisional. New versions supersede the old one only when the CMO accepts | The team defines baseline protocols per parameter |
 | D-02 | Resting HR stays a separate parameter (from Core v2) rather than HR with a "resting" condition | Simulator moves to v3 |
 | D-03 | Astronaut self-care kinds = monitoring, activity adjustment | The team defines a self-care policy |
 | D-04 | Sleep, exercise and self-rating scales kept from Core v2 as registry entries | The parameter list evolves |
-| D-05 | v2 projection kept until the simulator and rules read v3 | Plan increment 4 |
+| D-05 | v2 projection kept. *v3.1:* the v3 simulator and rules engine read v3 directly; the projection now serves only the Core v2 views (events, spacecraft, assessments) | Plan increment 4 |
+| D-06 | The simulated workspace is a separate `HealthWorkspace` with origin `synthetic`; commands there use the simulator clock. Observed and synthetic records never mix | — |
+| D-07 | Rules ship as `demonstration`; the CMO may disable or retune them; `approved` cannot be set inside AEGIS, and fixed cutoffs can never be approved | A medical authority approves content |
+| D-08 | Safety checks warn but do not block: the CMO must acknowledge issues in a note before continuing a step | Usability review with CMO-trained users |
+| D-09 | The assistant is a provider behind an interface with no write access; the shipped provider is keyword retrieval over sourced content; no model is connected | An onboard model is approved |

@@ -1,6 +1,6 @@
 # AEGIS v3 — Development Scope
 
-Status: active · 2026-11-15 · branch `analytics-so-on`
+Status: active (v3.1) · 2026-11-15 · branch `analytics-so-on`
 
 ## Product direction (unchanged)
 
@@ -17,26 +17,26 @@ AEGIS is an integrated crew health monitoring and decision-support system. It li
 
 | Capability (concept §) | Tier | State |
 |---|---|---|
-| Extensible parameter registry: definitions, units, sources, categories (§3, §10) | **Implemented** | 22 parameters: the 14 from the initial list plus 8 from Core v2. PAL and Body movement are *provisional* (unit TBD). |
-| Observations: quantity, ordinal, raw waveform; provenance; missing ≠ 0 (§3) | **Implemented** | Manual entry, grouped entry (SBP/DBP), exact unit conversion (L→mL, kPa→mmHg), ECG import |
-| Individual profile: longitudinal series, descriptive baseline (proposed → accepted by CMO), difference from baseline (§4, §10) | **Implemented** | Median of ≥ 3 valid readings. Descriptive, never "normal". |
-| Concern → encounter → recorded action → follow-up → outcome → closure (§6, §9) | **Implemented** | Role-limited; audit trail |
-| Persistence, v2→v3 migration, scoped export (§11) | **Implemented** | `aegis.core.v3`; the v2 copy is left untouched |
-| Existing Core v2 features: simulator, demo rules, spacecraft view, assessments | **Retained** | Fed through the v2 projection of v3 data |
-| Scheduled measurement and countermeasure plan with adherence (§5) | **Next: demonstration** | Data model drafted in the design (§3, CarePlanItem) |
-| Analysis rules engine: configurable, data-driven, each rule labelled demonstration or approved (§4) | **Next: demonstration** | Existing DEMO-RECOVERY/ENV rules migrate into it |
-| Simulator emitting v3 parameters (HR, PR, SpO₂, RR …) (§3) | **Next: demonstration** | Synthetic, deterministic, labelled |
-| Medical resource inventory: stock, expiry, forecast (§8) | **Next: demonstration** | Synthetic inventory |
-| Context-aware health information: per-parameter explanations, sourced (§7) | **Next: demonstration** | Sourced text only |
-| Protocol-guided encounter steps (§6.2–6.4) | **Requires validated clinical content** | The framework can be built and shown with *illustrative* protocols. Real use needs an approved protocol library. |
-| Medication/contraindication checks (§6.4, §8) | **Requires validated clinical content** | Needs an approved drug reference |
-| Reference ranges and abnormality flags (§4, §11) | **Requires validated clinical content** | `ReferenceValue` type exists; the registry ships none |
-| Device integration: Bio-Monitor, ECG, oximeter, TcCO₂ (§3) | **Requires external dependency** | Sources registered as `not_connected` |
-| Ground transmission and delayed communication (§11) | **Deferred** | Store-and-forward export first |
-| Natural-language assistant, LLM (§7) | **Deferred** | Allowed only as an interface over approved content; never decides |
-| Crew workload, schedule, power constraints (§8) | **Deferred** | Owned by vehicle and ops systems; consumed later |
-| Derived indicators: PAL, HRV from RRI | **Deferred** | Method must be defined first (`derivation.methodId`) |
-| Computer vision, speech or keystroke behavioural analysis | **Excluded / deferred** | Unvalidated research (source digest §4) |
+| Extensible parameter registry (§3, §10) | **Implemented** | 24 parameters (adds fluid and energy intake; exact kJ→kcal). PAL and Body movement stay *provisional*. |
+| Observations with provenance; missing ≠ 0 (§3) | **Implemented** | Manual, grouped, unit-converted, waveform import; synthetic entries in the simulated workspace |
+| Health profile: history, allergies, medications (as reported), limitations, risk factors and pre-flight results (CMO), qualifications, baselines, closed encounters (§4) | **Implemented** | Recorded text; no risk is derived |
+| Longitudinal baselines: policies (method, dataset, minimum), versions, supersession, recalculation (§4) | **Implemented** | Default policy provisional; 3 readings is only the arithmetic floor |
+| Analytics: windows, trend with uncertainty, completeness vs plan cadence, quality, freshness, spread, window comparison, multi-parameter view; pluggable analyses (§4) | **Implemented (descriptive)** | No normal/abnormal judgement |
+| Rules → attention items, configurable by CMO (§4) | **Demonstration** | 9 shipped rules, all `demonstration`; DEMO-RECOVERY-01 re-expressed; `approved` cannot be set inside AEGIS |
+| Preventive plans: schedule, completion/skip, adherence from readings, intake totals, CMO editor, escalation to care (§5) | **Demonstration** | Demonstration plan cadences are illustrative; no clinical targets |
+| Care workflow: concern → encounter → action → follow-up → outcome → closure (§6, §9) | **Implemented** | Role-limited, audited |
+| Clinical framework: structured intake, exam findings, priority/emergency mode, guided workflows with safety checks (equipment, qualification, comms), decision records (§6) | **Demonstration** | 3 *illustrative* workflows with no criteria, drugs or doses |
+| Approved protocols, medication/contraindication checks, reference ranges (§6, §8) | **Requires validated clinical content** | Types exist; nothing approved is loaded |
+| Mission configuration: presets with sourced comms/resupply context, crew qualifications (§8, §11) | **Demonstration** | Level-of-care labels are placeholders until NASA/TM-2017-219290 is reviewed |
+| Medical inventory: lots, expiry, FEFO use, forecast to mission end (§8) | **Demonstration** | Generic categories only, synthetic quantities |
+| Ground communication: store-and-forward with mission delay (§11) | **Demonstration** | Recorded and timed locally; not transmitted or encrypted |
+| Knowledge layer with sources (§7) | **Implemented (reference)** | 8 articles, every point cited to the source digest |
+| Assistant (§7) | **Architecture + local retrieval** | Provider interface; local keyword provider with guardrails; LLM provider is a stub marked *not connected* |
+| v3 simulator: seeded, reproducible scenarios feeding all workflows | **Implemented (synthetic)** | 4 scenarios; values are not physiological predictions |
+| Core v2 simulator, spacecraft view, assessments, DEMO-ENV-01 | **Retained** | To migrate (plan increment 4) |
+| Device integration (§3) | **Requires external dependency** | Sources registered as `not_connected` |
+| Derived indicators (PAL, HRV) | **Deferred** | Method must be defined |
+| Computer vision, speech/keystroke behavioural analysis | **Excluded** | |
 
 ## Definition of done for each increment
 
