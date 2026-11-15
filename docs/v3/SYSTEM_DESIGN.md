@@ -1,6 +1,6 @@
 # AEGIS v3 — System Design
 
-Status: implemented for slice 1; sections marked *(planned)* are not yet built · 2026-11-15
+Status: implemented through v3.1; items still marked *(planned)* are not built · 2026-11-15
 
 ## 1. Boundaries
 
@@ -8,7 +8,7 @@ Status: implemented for slice 1; sections marked *(planned)* are not yet built �
 |---|---|---|---|---|---|
 | Capture and store observations | validates, stores, shows provenance | records own data | records any crew member's data | receives exports *(planned)* | measure (not connected yet) |
 | Trend and baseline | computes descriptive statistics | proposes a baseline | proposes and **accepts** a baseline | — | — |
-| Flag deviations | *(planned)* rules engine; each rule labelled demonstration or approved | — | configures rules *(planned)* | supplies approved criteria | — |
+| Flag items needing attention | rules engine; every shipped rule is `demonstration` | acknowledges, opens an encounter | configures, disables, **dismisses** with a reason | supplies approved criteria (none loaded) | — |
 | Concern / encounter | structures and links evidence | opens, adds notes | opens, adds notes, **closes** | — | — |
 | Actions (interventions) | **records only**; never selects | records self-care actions only (monitoring, activity adjustment) | records any action type | concurs or modifies (off-system) | — |
 | Follow-up outcome | shows the evidence collected after the action | — | **judges** the outcome, citing readings | — | — |
@@ -100,9 +100,10 @@ capture (form, import, *planned* device adapters) → `createObservation` (norma
 |---|---|
 | Manual entry, waveform file import | Implemented |
 | Device adapters (Bio-Monitor, ECG, BP, oximeter, TcCO₂) → `createObservation` with `method: 'wearable'` | *Planned*; sources registered as not connected |
-| Ground transmission: scoped JSON export (v3) | Export implemented; store-and-forward *planned* |
+| Ground transmission | Scoped JSON export and store-and-forward message records with mission delay (local only; not transmitted) |
 | Approved protocol and drug libraries | External; required before clinical use |
-| Mission simulator | Core v2. It will emit v3 parameters *(planned)* |
+| Mission simulator | v3 simulator (`src/simulation/v3.ts`) emits v3 observations; Core v2 simulator retained for spacecraft/events views |
+| Assistant | `AssistantProvider` interface; local retrieval provider; LLM provider stub, not connected |
 
 ## 8. Existing implementation: evaluation
 
