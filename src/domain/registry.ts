@@ -20,6 +20,7 @@ export const CATEGORIES: ParameterCategory[] = [
   { id: 'sleep_activity', label: 'Sleep & activity', order: 4 },
   { id: 'self_report', label: 'Self-report', order: 5 },
   { id: 'examination', label: 'Examinations', order: 6 },
+  { id: 'intake', label: 'Hydration & nutrition', order: 7 },
 ]
 
 // 1 mmHg = 101325/760 Pa exactly (conventional definition) → 0.133322368… kPa.
@@ -40,6 +41,9 @@ export const UNITS: UnitDefinition[] = [
   { id: 'h', symbol: 'h', dimension: 'duration_hours' },
   { id: 'min', symbol: 'min', dimension: 'duration_minutes' },
   { id: 'g_per_cm2', symbol: 'g/cm²', dimension: 'areal_density' },
+  { id: 'kcal', symbol: 'kcal', dimension: 'energy' },
+  // 1 thermochemical kilocalorie = 4.184 kJ exactly (definition).
+  { id: 'kJ', symbol: 'kJ', dimension: 'energy', canonicalUnitId: 'kcal', toCanonical: { factor: 1 / 4.184, offset: 0 } },
 ]
 
 export const SOURCES: DataSourceDefinition[] = [
@@ -50,7 +54,7 @@ export const SOURCES: DataSourceDefinition[] = [
   { id: 'pulse-oximeter', label: 'Pulse oximeter', kind: 'device', availability: 'not_connected', providesParameterIds: ['spo2', 'pr'] },
   { id: 'tcco2-monitor', label: 'Transcutaneous CO₂ monitor', kind: 'device', availability: 'not_connected', providesParameterIds: ['ptcco2'] },
   { id: 'file-import', label: 'File import', kind: 'import', availability: 'manual', providesParameterIds: [], note: 'Recorded device export loaded from a file.' },
-  { id: 'mission-simulator', label: 'Mission simulator', kind: 'simulator', availability: 'simulated', providesParameterIds: [], note: 'Synthetic, deterministic scenario data. Not physiological predictions.' },
+  { id: 'mission-simulator', label: 'Mission simulator', kind: 'simulator', availability: 'simulated', providesParameterIds: ['hr', 'resting_hr', 'spo2', 'rr', 'sbp', 'dbp', 'skin_temp', 'body_mass', 'sleep_duration', 'exercise_duration', 'fatigue', 'mood', 'stress', 'fluid_intake', 'energy_intake'], note: 'Synthetic, deterministic scenario data. Not physiological predictions.' },
 ]
 
 const base = { version: 1, sourceRefIds: [] as string[], status: 'active' as const }
@@ -91,6 +95,10 @@ export const PARAMETERS: ParameterDefinition[] = [
   { ...base, id: 'symptom_severity', code: 'SYM', displayName: 'Symptom severity (self-rating)', categoryId: 'self_report', kind: 'self_report', valueType: 'ordinal', canonicalUnitId: null, acceptedUnitIds: [], scale: { min: 0, max: 10, lowAnchor: 'none', highAnchor: 'maximum', validatedInstrument: false }, requiresNote: true, potentialSourceIds: ['manual-entry', 'mission-simulator'], manualEntry: true, visualization: 'line', description: 'Describe the symptom in the note. Not a diagnosis.', provenance: coreV2 },
 
   // ── Examinations (Core v2) ──
+  // ── Hydration & nutrition (v3.1; intake logging for preventive plans) ──
+  { ...base, id: 'fluid_intake', code: 'FLU', displayName: 'Fluid intake', categoryId: 'intake', kind: 'self_report', valueType: 'quantity', canonicalUnitId: 'mL', acceptedUnitIds: ['mL', 'L'], entry: { min: 0, basis: 'definitional' }, potentialSourceIds: ['manual-entry', 'mission-simulator'], manualEntry: true, visualization: 'line', description: 'Fluid consumed in one logged period. AEGIS sums logs; it sets no intake target.', provenance: 'AEGIS v3.1 preventive-plan logging (project team)' },
+  { ...base, id: 'energy_intake', code: 'KCAL', displayName: 'Energy intake', categoryId: 'intake', kind: 'self_report', valueType: 'quantity', canonicalUnitId: 'kcal', acceptedUnitIds: ['kcal', 'kJ'], entry: { min: 0, basis: 'definitional' }, potentialSourceIds: ['manual-entry', 'mission-simulator'], manualEntry: true, visualization: 'line', description: 'Food energy logged for one meal or period. kJ is converted exactly to kcal. No target is set by AEGIS.', provenance: 'AEGIS v3.1 preventive-plan logging (project team)' },
+
   { ...base, id: 'bmd', code: 'BMD', displayName: 'Bone mineral density (exam)', categoryId: 'examination', kind: 'examination', valueType: 'quantity', canonicalUnitId: 'g_per_cm2', acceptedUnitIds: ['g_per_cm2'], entry: { min: 0, basis: 'definitional' }, requiresNote: true, potentialSourceIds: ['manual-entry', 'mission-simulator'], manualEntry: true, visualization: 'line', description: 'Recorded result of a bone density examination. Include site and report in the note.', provenance: coreV2 },
 ]
 

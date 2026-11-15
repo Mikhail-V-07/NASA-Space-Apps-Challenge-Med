@@ -80,6 +80,11 @@ const HEALTH_NOTICES: Record<HealthCommand['type'], string> = {
   'baseline/accept': 'Baseline accepted.', 'encounter/open': 'Concern recorded. A medical review can follow up.',
   'encounter/note': 'Note added.', 'encounter/link': 'Observations linked.', 'intervention/record': 'Action recorded. AEGIS did not select it.',
   'intervention/outcome': 'Follow-up outcome recorded.', 'encounter/close': 'Encounter closed.',
+  'baseline/compute': 'New baseline version proposed. Accept it in the CMO context.', 'profile/add': 'Profile entry saved.', 'profile/resolve': 'Profile entry resolved.',
+  'plan/create': 'Plan item created.', 'plan/seed': 'Demonstration plan loaded.', 'plan/status': 'Plan item updated.', 'plan/complete': 'Plan activity recorded.',
+  'attention/set': 'Attention item updated.', 'encounter/priority': 'Priority updated.', 'intake/record': 'Intake recorded.', 'finding/record': 'Finding recorded.',
+  'protocol/start': 'Illustrative workflow started.', 'protocol/advance': 'Step recorded.', 'decision/record': 'Decision recorded.',
+  'message/send': 'Message queued for the ground (store-and-forward).', 'resources/seed': 'Demonstration inventory loaded.', 'resource/use': 'Resource use logged.',
 }
 function applyHealth(state: AppState, commands: HealthCommand[]): AppState {
   if (state.scope !== 'observed') throw new Error('Switch to Observed records to change health records.')
